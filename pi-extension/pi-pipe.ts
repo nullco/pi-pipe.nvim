@@ -14,6 +14,7 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 interface PortFile {
   pid: number;
@@ -207,6 +208,58 @@ export default function (pi: ExtensionAPI) {
     sessionCtx = ctx;
     connect();
     updateStatus(ctx);
+  });
+
+  // Tool: let the LLM query the current nvim context on demand
+  pi.registerTool({
+    name: "nvim_context",
+    label: "Nvim Context",
+    description:
+      "Get the file, cursor position, and/or selected text from the user's Neovim. " +
+      "Call this when you need to know what file the user is editing, where their cursor is, " +
+      "or what text they have selected. Returns null if no connection to Neovim.",
+    parameters: Type.Object({}),
+    async execute() {
+      if (!latestSelection) {
+        return {
+          content: [{
+            type: "text",
+            text: "No Neovim connection. The user may not have Neovim running in this project.",
+          }],
+          details: {},
+        };
+      }
+
+      const sel = latestSelection;
+      const file = sel.relativePath || sel.fileName;
+      const hasSelection =
+        sel.selection.endLine > sel.selection.startLine ||
+        (sel.selection.endLine === sel.selection.startLine &&
+          sel.selection.endChar > sel.selection.startChar);
+
+      if (hasSelection) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `File: ${file}\n` +
+              `Selection: L${sel.selection.startLine}:${sel.selection.startChar} - L${sel.selection.endLine}:${sel.selection.endChar}\n` +
+              `\n\`\`\`${sel.fileName.match(/\.(\w+)$/)?.[1] || ""}\n${sel.selection.text}\n\`\`\``,
+          }],
+          details: {},
+        };
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text:
+            `File: ${file}\n` +
+            `Cursor: line ${sel.selection.startLine}, col ${sel.selection.startChar}`,
+        }],
+        details: {},
+      };
+    },
   });
 
   // Inject selection as a context message + update footer status
