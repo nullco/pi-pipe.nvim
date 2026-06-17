@@ -1,0 +1,17 @@
+{
+  "name": "pi-pipe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Send code context from Neovim directly into your pi coding agent session",
+  "keywords": [
+    "pi-package",
+    "neovim",
+    "pi"
+  ],
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./pi-extension/pi-pipe.ts"
+    ]
+  }
+}
