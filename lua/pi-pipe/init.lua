@@ -2,7 +2,7 @@ local M = {}
 
 M.config = {}
 M.state = {
-    port = nil,
+    socket_path = nil,
 }
 
 ---@param opts PiNvimConfig|nil
@@ -15,49 +15,44 @@ function M.setup(opts)
     -- Pass config to selection module (avoids circular require)
     selection.set_config(M.config)
 
-    -- Start the TCP server
+    -- Start the Unix socket server
     if M.config.auto_start then
-        local port, err = server.start()
-        if not port then
+        local socket_path, err = server.start()
+        if not socket_path then
             vim.notify("pi-pipe: Failed to start server: " .. (err or "unknown"), vim.log.levels.ERROR)
             return
         end
-        M.state.port = port
-
-        -- Write port to well-known file so pi extension can discover it
-        M._write_port_file(port)
+        M.state.socket_path = socket_path
 
         -- Enable selection tracking (passes server reference)
         selection.enable(server)
 
-        vim.notify("pi-pipe: listening on port " .. port, vim.log.levels.INFO)
+        vim.notify("pi-pipe: listening on " .. socket_path, vim.log.levels.INFO)
     end
 
     -- User commands
     vim.api.nvim_create_user_command("PiStart", function()
-        local port, err = server.start()
-        if not port then
+        local socket_path, err = server.start()
+        if not socket_path then
             vim.notify("pi-pipe: Failed: " .. (err or "unknown"), vim.log.levels.ERROR)
             return
         end
-        M.state.port = port
-        M._write_port_file(port)
+        M.state.socket_path = socket_path
         selection.enable(server)
-        vim.notify("pi-pipe: listening on port " .. port, vim.log.levels.INFO)
+        vim.notify("pi-pipe: listening on " .. socket_path, vim.log.levels.INFO)
     end, { desc = "Start pi-pipe server and selection tracking" })
 
     vim.api.nvim_create_user_command("PiStop", function()
         selection.disable()
         server.stop()
-        M._remove_port_file()
-        M.state.port = nil
+        M.state.socket_path = nil
         vim.notify("pi-pipe: stopped", vim.log.levels.INFO)
     end, { desc = "Stop pi-pipe server" })
 
     vim.api.nvim_create_user_command("PiStatus", function()
-        if M.state.port then
+        if M.state.socket_path then
             local sel = selection.get_current_selection()
-            local info = "pi-pipe: port " .. M.state.port .. " | "
+            local info = "pi-pipe: " .. M.state.socket_path .. " | "
             if sel then
                 local filename = vim.fn.fnamemodify(sel.fileUrl:gsub("^file://", ""), ":t")
                 info = info .. filename
@@ -71,7 +66,7 @@ function M.setup(opts)
     end, { desc = "Show pi-pipe status" })
 
     vim.api.nvim_create_user_command("PiTest", function()
-        if not M.state.port then
+        if not M.state.socket_path then
             vim.notify("pi-pipe: not running (run :PiStart first)", vim.log.levels.WARN)
             return
         end
@@ -90,35 +85,10 @@ function M.setup(opts)
         callback = function()
             selection.disable()
             server.stop()
-            M._remove_port_file()
         end,
     })
 
     vim.notify("pi-pipe: ready", vim.log.levels.INFO)
-end
-
-local PI_PIPE_DIR = "/tmp/pi-pipe"
-
----Write port to a per-instance file for pi extension discovery
-function M._write_port_file(port)
-    vim.fn.mkdir(PI_PIPE_DIR, "p")
-    local file = PI_PIPE_DIR .. "/port-" .. vim.fn.getpid() .. ".json"
-    local data = vim.json.encode({
-        pid = vim.fn.getpid(),
-        port = port,
-        cwd = vim.fn.getcwd(),
-    })
-    local f = io.open(file, "w")
-    if f then
-        f:write(data)
-        f:close()
-    end
-end
-
----Remove the port file
-function M._remove_port_file()
-    local file = PI_PIPE_DIR .. "/port-" .. vim.fn.getpid() .. ".json"
-    os.remove(file)
 end
 
 return M

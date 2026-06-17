@@ -1,51 +1,44 @@
----@brief TCP server for pi-pipe.nvim
---- Listens on a random port, sends newline-delimited JSON selection updates
+---@brief Unix domain socket server for pi-pipe.nvim
+--- Listens on a socket file, sends newline-delimited JSON selection updates
 --- to connected clients (pi extension).
 
 local M = {}
 
 M.state = {
     server = nil,
-    port = nil,
+    socket_path = nil,
     clients = {},
+    cwd = nil, -- captured at start(), safe to use in libuv callbacks
 }
 
----Find a random available port
----@return number|nil port
-local function find_port()
-    local server = vim.loop.new_tcp()
-    if not server then
-        return nil
-    end
-    local ok = server:bind("127.0.0.1", 0)
-    if not ok then
-        server:close()
-        return nil
-    end
-    local sockname = server:getsockname()
-    local port = sockname and sockname.port
-    server:close()
-    return port
+local PI_PIPE_DIR = "/tmp/pi-pipe"
+
+---Generate a unique socket path for this Neovim instance
+---@return string socket_path
+local function make_socket_path()
+    return PI_PIPE_DIR .. "/pipe-" .. vim.fn.getpid() .. ".sock"
 end
 
----Start the TCP server
----@return number|nil port, string|nil error
+---Start the Unix socket server
+---@return string|nil socket_path, string|nil error
 function M.start()
     if M.state.server then
-        return M.state.port -- already running
+        return M.state.socket_path -- already running
     end
 
-    local port = find_port()
-    if not port then
-        return nil, "Could not find available port"
-    end
+    vim.fn.mkdir(PI_PIPE_DIR, "p")
 
-    local server = vim.loop.new_tcp()
+    local socket_path = make_socket_path()
+
+    -- Remove stale socket file if it exists
+    os.remove(socket_path)
+
+    local server = vim.loop.new_pipe(false)
     if not server then
-        return nil, "Failed to create TCP server"
+        return nil, "Failed to create pipe server"
     end
 
-    local ok, err = server:bind("127.0.0.1", port)
+    local ok, err = server:bind(socket_path)
     if not ok then
         server:close()
         return nil, "Failed to bind: " .. (err or "unknown")
@@ -64,14 +57,15 @@ function M.start()
     end
 
     M.state.server = server
-    M.state.port = port
+    M.state.socket_path = socket_path
+    M.state.cwd = vim.fn.getcwd()
 
-    return port
+    return socket_path
 end
 
 ---Accept a new client connection
 function M._accept(server)
-    local client = vim.loop.new_tcp()
+    local client = vim.loop.new_pipe(false)
     if not client then
         return
     end
@@ -86,6 +80,13 @@ function M._accept(server)
 
     local client_id = tostring(client):gsub(".*: ", "")
     M.state.clients[client_id] = client
+
+    -- Send handshake with cwd so pi can match to the right project
+    local handshake = vim.json.encode({
+        type = "handshake",
+        cwd = M.state.cwd,
+    }) .. "\n"
+    client:write(handshake)
 
     -- Send latest selection to newly connected client so pi has context immediately
     vim.schedule(function()
@@ -149,13 +150,18 @@ function M.stop()
         M.state.server:close()
     end
     M.state.server = nil
-    M.state.port = nil
+
+    -- Remove socket file
+    if M.state.socket_path then
+        os.remove(M.state.socket_path)
+        M.state.socket_path = nil
+    end
 end
 
----Get the current port
----@return number|nil
-function M.get_port()
-    return M.state.port
+---Get the current socket path
+---@return string|nil
+function M.get_socket_path()
+    return M.state.socket_path
 end
 
 return M

@@ -1,19 +1,19 @@
 # pi-pipe.nvim
 
-Keep your [pi](https://pi.dev) coding agent aware of what you're looking at in Neovim — in real time via TCP.
+Keep your [pi](https://pi.dev) coding agent aware of what you're looking at in Neovim — in real time via Unix domain sockets.
 
 As you move your cursor or select code, pi receives live updates. On every prompt, the current selection (or buffer) is automatically injected as context.
 
 ## How it works
 
-Two pieces communicating over a local TCP socket:
+Two pieces communicating over a local Unix domain socket:
 
-1. **Neovim plugin** — starts a TCP server on a random port, broadcasts cursor/selection as NDJSON on every `CursorMoved` / `ModeChanged`. Writes the port to `/tmp/pi-pipe/port-<nvim-pid>.json`.
+1. **Neovim plugin** — starts a Unix socket server at `/tmp/pi-pipe/pipe-<nvim-pid>.sock`, broadcasts cursor/selection as NDJSON on every `CursorMoved` / `ModeChanged`. On connect, sends a handshake with its `cwd`.
 
-2. **Pi extension** — scans `/tmp/pi-pipe/` for a running Neovim in the same project tree (any depth), connects via TCP, caches the latest selection. Shows the current file and selection in pi's footer status line. On every prompt, the selection is sent to the LLM as context.
+2. **Pi extension** — scans `/tmp/pi-pipe/` for `.sock` files from alive processes, connects to each, reads the handshake, and keeps the first one whose `cwd` matches (same project or ancestor/descendant). Caches the latest selection. Shows the current file and selection in pi's footer status line. On every prompt, the selection is sent to the LLM as context.
 
 ```
-CursorMoved → selection.lua → TCP → pi extension caches
+CursorMoved → selection.lua → Unix Socket → pi extension caches
                                         │
                            updates footer status line
                                         │
@@ -65,7 +65,7 @@ When you type a prompt in pi, the current selection is sent to the LLM as contex
 |---------|--------|
 | `:PiStart` | Start the TCP server and selection tracking |
 | `:PiStop` | Stop tracking and shut down the server |
-| `:PiStatus` | Show port and current selection info |
+| `:PiStatus` | Show socket path and current selection info |
 | `:PiTest` | Force a test broadcast to verify connectivity |
 
 ## Configuration
@@ -90,7 +90,7 @@ Pi scans `/tmp/pi-pipe/` for port files from running Neovim instances. It matche
 
 **Selection not showing up:** Ensure Neovim is running (with the plugin loaded) *before* you start pi in the same project. Run `:PiStatus` in Neovim to verify.
 
-**`pi-pipe: Failed to start server`:** Check for port conflicts or permissions. Run `:PiStart` manually to see the error.
+**`pi-pipe: Failed to start server`:** Check permissions on `/tmp/pi-pipe/`. Run `:PiStart` manually to see the error.
 
 ## License
 

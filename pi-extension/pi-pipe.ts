@@ -1,9 +1,9 @@
 /**
- * pi-pipe extension — Real-time selection tracking from Neovim via TCP.
+ * pi-pipe extension — Real-time selection tracking from Neovim via Unix socket.
  *
- * Neovim runs a TCP server and broadcasts cursor/selection updates as
- * newline-delimited JSON. This extension connects to that server on
- * session_start and maintains the latest selection in memory.
+ * Neovim runs a Unix domain socket server and broadcasts cursor/selection
+ * updates as newline-delimited JSON. This extension connects to that server
+ * on session_start and maintains the latest selection in memory.
  *
  * On every before_agent_start, when text is selected, it's injected as
  * a context message so pi can reference it. The footer status line
@@ -15,12 +15,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
-interface PortFile {
-  pid: number;
-  port: number;
-  cwd: string;
-}
 
 interface SelectionPayload {
   type: "selection";
@@ -39,9 +33,14 @@ interface SelectionPayload {
   mode: string;
 }
 
-const PORT_FILE_DIR = "/tmp/pi-pipe";
+interface HandshakePayload {
+  type: "handshake";
+  cwd: string;
+}
 
-// Latest selection from Neovim (updated in real-time via TCP)
+const SOCKET_DIR = "/tmp/pi-pipe";
+
+// Latest selection from Neovim (updated in real-time via Unix socket)
 let latestSelection: SelectionPayload | null = null;
 
 /**
@@ -56,51 +55,41 @@ function isUnderOrSame(child: string, parent: string): boolean {
   return c.startsWith(p + "/");
 }
 
-function findPortFile(cwd: string): PortFile | null {
-  let files: string[];
-  try {
-    files = fs.readdirSync(PORT_FILE_DIR);
-  } catch {
-    return null;
-  }
-
-  const candidates: PortFile[] = [];
-  for (const name of files) {
-    if (!name.startsWith("port-") || !name.endsWith(".json")) continue;
-    try {
-      const raw = fs
-        .readFileSync(path.join(PORT_FILE_DIR, name), "utf-8")
-        .trim();
-      if (!raw) continue;
-      const entry = JSON.parse(raw) as PortFile;
-      if (isProcessAlive(entry.pid)) {
-        candidates.push(entry);
-      }
-    } catch {
-      // stale or malformed file, ignore
-    }
-  }
-
-  // Prefer exact match, then any ancestor/descendant relationship
-  for (const entry of candidates) {
-    if (entry.cwd === cwd) return entry;
-  }
-  for (const entry of candidates) {
-    if (isUnderOrSame(entry.cwd, cwd) || isUnderOrSame(cwd, entry.cwd)) {
-      return entry;
-    }
-  }
-
-  return null;
-}
-
-function isProcessAlive(pid: number): boolean {
+/**
+ * Parse pid from a socket filename like "pipe-12345.sock"
+ */
+function parsePidFromSocket(name: string): number | null {
+  const match = name.match(/^pipe-(\d+)\.sock$/);
+  if (!match) return null;
+  const pid = parseInt(match[1], 10);
   try {
     process.kill(pid, 0);
-    return true;
+    return pid;
   } catch {
-    return false;
+    return null; // process not alive
   }
+}
+
+/**
+ * Scan /tmp/pi-pipe/ for .sock files. Returns array of { pid, path } for
+ * alive processes. The cwd is not known yet — we try connecting first.
+ */
+function findSocketPaths(): { pid: number; path: string }[] {
+  let files: string[];
+  try {
+    files = fs.readdirSync(SOCKET_DIR);
+  } catch {
+    return [];
+  }
+
+  const result: { pid: number; path: string }[] = [];
+  for (const name of files) {
+    const pid = parsePidFromSocket(name);
+    if (pid !== null) {
+      result.push({ pid, path: path.join(SOCKET_DIR, name) });
+    }
+  }
+  return result;
 }
 
 function formatSelectionContext(sel: SelectionPayload): string | null {
@@ -155,53 +144,125 @@ export default function (pi: ExtensionAPI) {
   }
 
   function connect() {
-    const portFile = findPortFile(cwd);
-    if (!portFile) {
+    const sockets = findSocketPaths();
+    if (sockets.length === 0) {
       reconnectTimer = setTimeout(connect, 2000);
       return;
     }
 
-    const socket = new net.Socket();
+    // Try each socket sequentially. The first one whose handshake
+    // matches our cwd (or is an ancestor/descendant) wins.
+    let idx = 0;
+    let resolved = false;
 
-    socket.connect(portFile.port, "127.0.0.1", () => {
-      client = socket;
-      buffer = "";
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
+    function tryNext() {
+      if (resolved) return;
+      if (idx >= sockets.length) {
+        reconnectTimer = setTimeout(connect, 2000);
+        return;
       }
-    });
 
-    socket.on("data", (data: Buffer) => {
-      buffer += data.toString("utf-8");
+      const entry = sockets[idx++];
+      const socket = net.createConnection(entry.path);
+      let handshakeBuf = "";
 
-      while (true) {
-        const nl = buffer.indexOf("\n");
-        if (nl === -1) break;
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
+      socket.on("data", (data: Buffer) => {
+        if (!resolved) {
+          // Still waiting for handshake
+          handshakeBuf += data.toString("utf-8");
 
-        if (line) {
+          const nl = handshakeBuf.indexOf("\n");
+          if (nl === -1) return;
+
+          const line = handshakeBuf.slice(0, nl);
+          const rest = handshakeBuf.slice(nl + 1);
+
+          let handshake: HandshakePayload;
           try {
-            latestSelection = JSON.parse(line);
-            updateStatus();
+            handshake = JSON.parse(line);
           } catch {
-            // Ignore malformed lines
+            socket.destroy();
+            return;
           }
+
+          if (handshake.type !== "handshake") {
+            socket.destroy();
+            return;
+          }
+
+          // Check cwd match
+          if (
+            handshake.cwd !== cwd &&
+            !isUnderOrSame(handshake.cwd, cwd) &&
+            !isUnderOrSame(cwd, handshake.cwd)
+          ) {
+            socket.destroy();
+            return;
+          }
+
+          // Matched! Keep this connection.
+          resolved = true;
+          client = socket;
+          buffer = rest;
+          if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+
+          // Process any remaining data from the handshake chunk
+          processBuffer();
+        } else {
+          // After handshake, accumulate and process selection messages
+          buffer += data.toString("utf-8");
+          processBuffer();
+        }
+      });
+
+      socket.on("error", () => {
+        socket.destroy();
+        if (!resolved) tryNext();
+      });
+
+      socket.on("close", () => {
+        if (resolved) {
+          // Our active connection dropped
+          client = null;
+          latestSelection = null;
+          updateStatus();
+          reconnectTimer = setTimeout(connect, 2000);
+        }
+      });
+
+      // Timeout: move on to next socket
+      setTimeout(() => {
+        if (!resolved) {
+          socket.destroy();
+        }
+      }, 1000);
+    }
+
+    tryNext();
+  }
+
+  function processBuffer() {
+    while (true) {
+      const nl = buffer.indexOf("\n");
+      if (nl === -1) break;
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+
+      if (line) {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === "selection") {
+            latestSelection = msg;
+            updateStatus();
+          }
+        } catch {
+          // Ignore malformed lines
         }
       }
-    });
-
-    socket.on("close", () => {
-      client = null;
-      latestSelection = null;
-      updateStatus();
-      reconnectTimer = setTimeout(connect, 2000);
-    });
-
-    socket.on("error", () => {
-      socket.destroy();
-    });
+    }
   }
 
   pi.on("session_start", async (_event, ctx) => {
