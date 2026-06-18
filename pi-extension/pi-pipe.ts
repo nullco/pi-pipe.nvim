@@ -216,7 +216,6 @@ export default function (pi: ExtensionAPI) {
       socket.on("error", () => {
         clearTimeout(abandonTimer);
         socket.destroy();
-        if (!resolved) tryNext();
       });
 
       socket.on("close", () => {
@@ -227,6 +226,9 @@ export default function (pi: ExtensionAPI) {
           latestSelection = null;
           updateStatus();
           reconnectTimer = setTimeout(connect, 2000);
+        } else {
+          // Rejected — try the next candidate socket
+          tryNext();
         }
       });
     }
