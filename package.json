@@ -1,5 +1,5 @@
 {
-  "name": "nvim-pi-pipe",
+  "name": "pi-pipe.nvim",
   "version": "1.0.0",
   "private": true,
   "description": "Send code context from Neovim directly into your pi coding agent session",
