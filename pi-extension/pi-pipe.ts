@@ -102,11 +102,11 @@ function formatStatusLine(sel: SelectionPayload): string {
 
   if (hasSelection) {
     if (startLine === endLine) {
-      return `sel: ${file}:${startLine} (${startChar}-${endChar})`;
+      return `nvim: ${file}:${startLine} (${startChar}-${endChar})`;
     }
-    return `sel: ${file}:${startLine}-${endLine}`;
+    return `nvim: ${file}:${startLine}-${endLine}`;
   }
-  return `${file}:${startLine}`;
+  return `nvim: ${file}:${startLine}`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -281,6 +281,13 @@ export default function (pi: ExtensionAPI) {
 
   // `/nvim <prompt>` — send a prompt with the current Neovim selection
   // (or file, if nothing is selected) attached as context.
+  //
+  // The context is injected as a hidden custom message (display: false) so it
+  // reaches the LLM without cluttering the editor — the editor only shows the
+  // user's original prompt. With no args, the context alone drives the turn.
+  // sendMessage() pushes to session state synchronously, so when a prompt is
+  // present the stashed context is already in history before sendUserMessage()
+  // triggers the turn.
   pi.registerCommand("nvim", {
     description: "Send a prompt with current Neovim selection (or file) as context",
     handler: async (args, ctx) => {
@@ -289,8 +296,16 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const context = formatNvimContext(latestSelection);
-      const text = args.trim() ? `${args.trim()}\n\n${context}` : context;
-      pi.sendUserMessage(text);
+      const trimmed = args.trim();
+      // Stash the context as a hidden message. With a prompt, sendUserMessage()
+      // triggers the turn; without one, trigger the turn directly here.
+      pi.sendMessage(
+        { customType: "pi-pipe-context", content: context, display: false },
+        trimmed ? undefined : { triggerTurn: true },
+      );
+      if (trimmed) {
+        pi.sendUserMessage(trimmed);
+      }
     },
   });
 
