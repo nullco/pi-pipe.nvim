@@ -9,6 +9,11 @@
     "pi"
   ],
   "type": "module",
+  "scripts": {
+    "test:ts": "node --experimental-strip-types --test pi-extension/pi-pipe.test.ts",
+    "test:nvim": "nvim --headless -u NONE -c \"set rtp+=$HOME/.local/share/nvim/lazy/plenary.nvim\" -c \"runtime plugin/plenary.vim\" -c \"PlenaryBustedFile spec/selection_spec.lua\" -c \"qa!\"",
+    "test": "npm run test:ts && npm run test:nvim"
+  },
   "pi": {
     "extensions": [
       "./pi-extension/pi-pipe.ts"

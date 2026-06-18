@@ -11,6 +11,8 @@ M.state = {
     cwd = nil, -- captured at start(), safe to use in libuv callbacks
 }
 
+M._next_client_id = 0
+
 local PI_PIPE_DIR = "/tmp/pi-pipe"
 
 ---Generate a unique socket path for this Neovim instance
@@ -27,6 +29,9 @@ function M.start()
     end
 
     vim.fn.mkdir(PI_PIPE_DIR, "p")
+    -- Best-effort: restrict the socket directory to the owner. Other local
+    -- users should not be able to connect and read selection contents.
+    pcall(vim.loop.fs_chmod, PI_PIPE_DIR, 0o700)
 
     local socket_path = make_socket_path()
 
@@ -43,6 +48,9 @@ function M.start()
         server:close()
         return nil, "Failed to bind: " .. (err or "unknown")
     end
+
+    -- Restrict the socket file itself to owner-only (rw).
+    pcall(vim.loop.fs_chmod, socket_path, 0o600)
 
     ok, err = server:listen(128, function(listen_err)
         if listen_err then
@@ -78,7 +86,8 @@ function M._accept(server)
         return
     end
 
-    local client_id = tostring(client):gsub(".*: ", "")
+    local client_id = tostring(M._next_client_id + 1)
+    M._next_client_id = M._next_client_id + 1
     M.state.clients[client_id] = client
 
     -- Send handshake with cwd so pi can match to the right project
@@ -96,9 +105,8 @@ function M._accept(server)
         end
     end)
 
-    -- Accumulate data until newline
-    local buffer = ""
-
+    -- Drain any incoming data; we don't expect clients to send anything,
+    -- but read_start is required to get EOF/error notifications.
     client:read_start(function(read_err, data)
         if read_err then
             M._remove_client(client_id)
@@ -109,10 +117,7 @@ function M._accept(server)
             M._remove_client(client_id)
             return
         end
-
-        buffer = buffer .. data
-
-        -- We don't expect clients to send data, but drain any received lines
+        -- Discard inbound data; protocol is server->client only.
     end)
 end
 

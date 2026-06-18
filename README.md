@@ -28,7 +28,7 @@ This repo is a pi package. Install with `pi install`:
 
 ```bash
 # From git (once pushed)
-pi install git:github.com/your-username/pi-pipe.nvim
+pi install git:github.com/nullco/pi-pipe.nvim
 
 # From local path (for development)
 pi install ~/Projects/pi-pipe.nvim
@@ -42,7 +42,7 @@ Restart pi. You should see `pi-pipe ready (cwd: ...)` on startup.
 
 ```lua
 {
-    "your-username/pi-pipe.nvim",
+    "nullco/pi-pipe.nvim",
     dir = "~/Projects/pi-pipe.nvim", -- or omit for git install
     config = function()
         require("pi-pipe").setup()
@@ -63,7 +63,7 @@ When you type a prompt in pi, the current selection is sent to the LLM as contex
 
 | Command | Action |
 |---------|--------|
-| `:PiStart` | Start the TCP server and selection tracking |
+| `:PiStart` | Start the Unix socket server and selection tracking |
 | `:PiStop` | Stop tracking and shut down the server |
 | `:PiStatus` | Show socket path and current selection info |
 | `:PiTest` | Force a test broadcast to verify connectivity |
@@ -95,3 +95,16 @@ Pi scans `/tmp/pi-pipe/` for port files from running Neovim instances. It matche
 ## License
 
 MIT
+
+## Tests
+
+```bash
+# TypeScript helpers (node:test)
+npm run test:ts
+
+# Lua selection spec (requires plenary.nvim on your runtimepath)
+npm run test:nvim
+
+# Both
+npm test
+```

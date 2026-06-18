@@ -8,7 +8,8 @@ end
 
 -- Setup with defaults on load (user can override with require("pi-pipe").setup({...}))
 vim.schedule(function()
-    if not require("pi-pipe").config or next(require("pi-pipe").config) == nil then
-        require("pi-pipe").setup()
+    local mod = require("pi-pipe")
+    if not mod._configured then
+        mod.setup()
     end
 end)

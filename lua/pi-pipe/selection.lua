@@ -1,5 +1,5 @@
 ---@brief Passive selection tracking for pi-pipe.nvim
---- Tracks cursor/selection and broadcasts via TCP to the pi extension.
+--- Tracks cursor/selection and broadcasts via Unix domain socket to the pi extension.
 --- Patterned after amp.nvim's selection tracking.
 
 local M = {}
@@ -10,7 +10,7 @@ M.state = {
     tracking_enabled = false,
     debounce_timer = nil,
     debounce_ms = 100,
-    server = nil, -- reference to the tcp server module
+    server = nil, -- reference to the unix socket server module
 }
 
 -- Config (set by init.lua to avoid circular require)
@@ -159,7 +159,7 @@ function M.has_selection_changed(new_sel)
     return false
 end
 
----Build the payload and broadcast via TCP
+---Build the payload and broadcast via Unix socket
 ---@param force boolean Force send even if unchanged
 function M.update_and_broadcast(force)
     if not M.state.tracking_enabled then
@@ -197,7 +197,7 @@ function M.update_and_broadcast(force)
         mode = vim.api.nvim_get_mode().mode,
     }
 
-    -- Broadcast via TCP (NDJSON: one line per message)
+    -- Broadcast via Unix socket (NDJSON: one line per message)
     local json = vim.json.encode(payload)
     M.state.server.broadcast(json .. "\n")
 end
@@ -206,7 +206,6 @@ end
 function M.debounced_update()
     if M.state.debounce_timer then
         M.state.debounce_timer:stop()
-        M.state.debounce_timer:close()
     end
 
     M.state.debounce_timer = vim.defer_fn(function()
@@ -216,7 +215,7 @@ function M.debounced_update()
 end
 
 ---Enable selection tracking
----@param server table The TCP server module
+---@param server table The Unix socket server module
 function M.enable(server)
     if M.state.tracking_enabled then
         return

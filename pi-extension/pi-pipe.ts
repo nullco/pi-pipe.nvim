@@ -13,8 +13,9 @@
 import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { isUnderOrSame, parsePidFromSocket } from "./helpers.ts";
 
 interface SelectionPayload {
   type: "selection";
@@ -42,33 +43,6 @@ const SOCKET_DIR = "/tmp/pi-pipe";
 
 // Latest selection from Neovim (updated in real-time via Unix socket)
 let latestSelection: SelectionPayload | null = null;
-
-/**
- * Check if `child` is at or under `parent` in the filesystem tree.
- * Works for arbitrary depth: /a/b/c is under /a, /a/b, and /a/b/c.
- */
-function isUnderOrSame(child: string, parent: string): boolean {
-  if (child === parent) return true;
-  // Normalize trailing slashes away; ensure we match path boundaries
-  const p = parent.endsWith("/") ? parent.slice(0, -1) : parent;
-  const c = child.endsWith("/") ? child.slice(0, -1) : child;
-  return c.startsWith(p + "/");
-}
-
-/**
- * Parse pid from a socket filename like "pipe-12345.sock"
- */
-function parsePidFromSocket(name: string): number | null {
-  const match = name.match(/^pipe-(\d+)\.sock$/);
-  if (!match) return null;
-  const pid = parseInt(match[1], 10);
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return null; // process not alive
-  }
-}
 
 /**
  * Scan /tmp/pi-pipe/ for .sock files. Returns array of { pid, path } for
@@ -131,7 +105,7 @@ export default function (pi: ExtensionAPI) {
   let client: net.Socket | null = null;
   let buffer = "";
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let sessionCtx: any = null;
+  let sessionCtx: ExtensionContext | null = null;
 
   function updateStatus(ctx?: any) {
     const ui = (ctx || sessionCtx);
@@ -166,6 +140,13 @@ export default function (pi: ExtensionAPI) {
       const socket = net.createConnection(entry.path);
       let handshakeBuf = "";
 
+      // Abandon this attempt if no handshake lands within 1s; move to next.
+      const abandonTimer = setTimeout(() => {
+        if (!resolved) {
+          socket.destroy();
+        }
+      }, 1000);
+
       socket.on("data", (data: Buffer) => {
         if (!resolved) {
           // Still waiting for handshake
@@ -181,11 +162,13 @@ export default function (pi: ExtensionAPI) {
           try {
             handshake = JSON.parse(line);
           } catch {
+            clearTimeout(abandonTimer);
             socket.destroy();
             return;
           }
 
           if (handshake.type !== "handshake") {
+            clearTimeout(abandonTimer);
             socket.destroy();
             return;
           }
@@ -196,12 +179,14 @@ export default function (pi: ExtensionAPI) {
             !isUnderOrSame(handshake.cwd, cwd) &&
             !isUnderOrSame(cwd, handshake.cwd)
           ) {
+            clearTimeout(abandonTimer);
             socket.destroy();
             return;
           }
 
           // Matched! Keep this connection.
           resolved = true;
+          clearTimeout(abandonTimer);
           client = socket;
           buffer = rest;
           if (reconnectTimer) {
@@ -219,11 +204,13 @@ export default function (pi: ExtensionAPI) {
       });
 
       socket.on("error", () => {
+        clearTimeout(abandonTimer);
         socket.destroy();
         if (!resolved) tryNext();
       });
 
       socket.on("close", () => {
+        clearTimeout(abandonTimer);
         if (resolved) {
           // Our active connection dropped
           client = null;
@@ -232,13 +219,6 @@ export default function (pi: ExtensionAPI) {
           reconnectTimer = setTimeout(connect, 2000);
         }
       });
-
-      // Timeout: move on to next socket
-      setTimeout(() => {
-        if (!resolved) {
-          socket.destroy();
-        }
-      }, 1000);
     }
 
     tryNext();

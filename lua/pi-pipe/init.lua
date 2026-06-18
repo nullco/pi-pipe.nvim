@@ -4,6 +4,7 @@ M.config = {}
 M.state = {
     socket_path = nil,
 }
+M._configured = false
 
 ---@param opts PiNvimConfig|nil
 function M.setup(opts)
@@ -89,6 +90,7 @@ function M.setup(opts)
     })
 
     vim.notify("pi-pipe: ready", vim.log.levels.INFO)
+    M._configured = true
 end
 
 return M
