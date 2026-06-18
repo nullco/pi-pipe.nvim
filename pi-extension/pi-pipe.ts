@@ -13,7 +13,7 @@
 import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isUnderOrSame, parsePidFromSocket } from "./helpers.ts";
 
@@ -43,6 +43,12 @@ const SOCKET_DIR = "/tmp/pi-pipe";
 
 // Latest selection from Neovim (updated in real-time via Unix socket)
 let latestSelection: SelectionPayload | null = null;
+
+// Active theme instance — captured once at session_start so we can style
+// the footer status to match pi's built-in footer (which uses theme.fg("dim", ...)).
+// The theme export is a Proxy that reads from globalThis, so this reference
+// automatically tracks theme switches.
+let activeTheme: Theme | null = null;
 
 /**
  * Scan /tmp/pi-pipe/ for .sock files. Returns array of { pid, path } for
@@ -111,7 +117,11 @@ export default function (pi: ExtensionAPI) {
     const ui = (ctx || sessionCtx);
     if (!ui?.hasUI) return;
     if (latestSelection) {
-      ui.ui.setStatus("pi-pipe", formatStatusLine(latestSelection));
+      const text = formatStatusLine(latestSelection);
+      // Match the built-in footer's dim style so the status blends in
+      // with pwd, token stats, and git branch.
+      const styled = activeTheme ? activeTheme.fg("dim", text) : text;
+      ui.ui.setStatus("pi-pipe", styled);
     } else {
       ui.ui.setStatus("pi-pipe", undefined);
     }
@@ -247,6 +257,19 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionCtx = ctx;
+
+    // Capture the active theme instance by briefly installing a throwaway
+    // footer factory. The factory receives the live theme proxy as its
+    // second argument; we stash it and immediately restore the built-in
+    // footer. The proxy reads from globalThis, so it tracks theme switches.
+    if (ctx.hasUI) {
+      ctx.ui.setFooter((_tui, theme, _data) => {
+        activeTheme = theme;
+        return { render: () => [] };
+      });
+      ctx.ui.setFooter(undefined);
+    }
+
     connect();
     updateStatus(ctx);
   });
@@ -330,6 +353,7 @@ export default function (pi: ExtensionAPI) {
     }
     latestSelection = null;
     sessionCtx = null;
+    activeTheme = null;
     if (ctx.hasUI) {
       ctx.ui.setStatus("pi-pipe", undefined);
     }
