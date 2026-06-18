@@ -63,7 +63,7 @@ To send a prompt with your current Neovim context attached, use the `/nvim` comm
 
 The args can be multiline (everything after the first space is the prompt). The context is attached as a hidden message — it reaches the LLM but doesn't clutter the editor, which only shows your prompt. With no args, only the context is sent. You'll also see the current file and selection state in pi's footer:
 
-- **`nvim: file.lua:42`** — cursor on line 42, nothing selected
+- **`nvim: file.lua`** — nothing selected
 - **`nvim: file.lua:10-25`** — text selected on lines 10-25
 
 ### Commands

@@ -1,5 +1,5 @@
 /**
- * Pure helpers for pi-pipe — no external deps, safe to unit test.
+ * Pure helpers for nvim-pi-pipe — no external deps, safe to unit test.
  */
 
 /**

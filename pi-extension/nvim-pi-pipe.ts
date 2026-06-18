@@ -1,5 +1,5 @@
 /**
- * pi-pipe extension — Real-time selection tracking from Neovim via Unix socket.
+ * nvim-pi-pipe extension — Real-time selection tracking from Neovim via Unix socket.
  *
  * Neovim runs a Unix domain socket server and broadcasts cursor/selection
  * updates as newline-delimited JSON. This extension connects to that server
@@ -106,7 +106,7 @@ function formatStatusLine(sel: SelectionPayload): string {
     }
     return `nvim: ${file}:${startLine}-${endLine}`;
   }
-  return `nvim: ${file}:${startLine}`;
+  return `nvim: ${file}`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -124,9 +124,9 @@ export default function (pi: ExtensionAPI) {
       // Match the built-in footer's dim style so the status blends in
       // with pwd, token stats, and git branch.
       const styled = activeTheme ? activeTheme.fg("dim", text) : text;
-      ui.ui.setStatus("pi-pipe", styled);
+      ui.ui.setStatus("nvim-pi-pipe", styled);
     } else {
-      ui.ui.setStatus("pi-pipe", undefined);
+      ui.ui.setStatus("nvim-pi-pipe", undefined);
     }
   }
 
@@ -292,7 +292,7 @@ export default function (pi: ExtensionAPI) {
     description: "Send a prompt with current Neovim selection (or file) as context",
     handler: async (args, ctx) => {
       if (!latestSelection) {
-        ctx.ui.notify("pi-pipe: no Neovim connection", "warning");
+        ctx.ui.notify("nvim-pi-pipe: no Neovim connection", "warning");
         return;
       }
       const context = formatNvimContext(latestSelection);
@@ -300,7 +300,7 @@ export default function (pi: ExtensionAPI) {
       // Stash the context as a hidden message. With a prompt, sendUserMessage()
       // triggers the turn; without one, trigger the turn directly here.
       pi.sendMessage(
-        { customType: "pi-pipe-context", content: context, display: false },
+        { customType: "nvim-pi-pipe-context", content: context, display: false },
         trimmed ? undefined : { triggerTurn: true },
       );
       if (trimmed) {
@@ -322,7 +322,7 @@ export default function (pi: ExtensionAPI) {
     sessionCtx = null;
     activeTheme = null;
     if (ctx.hasUI) {
-      ctx.ui.setStatus("pi-pipe", undefined);
+      ctx.ui.setStatus("nvim-pi-pipe", undefined);
     }
   });
 }
