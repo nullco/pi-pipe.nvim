@@ -31,7 +31,8 @@ function M.start()
     vim.fn.mkdir(PI_PIPE_DIR, "p")
     -- Best-effort: restrict the socket directory to the owner. Other local
     -- users should not be able to connect and read selection contents.
-    pcall(vim.loop.fs_chmod, PI_PIPE_DIR, 0o700)
+    -- (0o700 = 448; LuaJIT has no octal literal syntax.)
+    pcall(vim.loop.fs_chmod, PI_PIPE_DIR, 448)
 
     local socket_path = make_socket_path()
 
@@ -49,8 +50,8 @@ function M.start()
         return nil, "Failed to bind: " .. (err or "unknown")
     end
 
-    -- Restrict the socket file itself to owner-only (rw).
-    pcall(vim.loop.fs_chmod, socket_path, 0o600)
+    -- Restrict the socket file itself to owner-only (rw). (0o600 = 384.)
+    pcall(vim.loop.fs_chmod, socket_path, 384)
 
     ok, err = server:listen(128, function(listen_err)
         if listen_err then
