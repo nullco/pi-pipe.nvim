@@ -10,14 +10,14 @@ Two pieces communicating over a local Unix domain socket:
 
 1. **Neovim plugin** — starts a Unix socket server at `/tmp/pi-pipe/pipe-<nvim-pid>.sock`, broadcasts cursor/selection as NDJSON on every `CursorMoved` / `ModeChanged`. On connect, sends a handshake with its `cwd`.
 
-2. **Pi extension** — scans `/tmp/pi-pipe/` for `.sock` files from alive processes, connects to each, reads the handshake, and keeps the first one whose `cwd` matches (same project or ancestor/descendant). Caches the latest selection. Shows the current file and selection in pi's footer status line. On every prompt, the selection is sent to the LLM as context.
+2. **Pi extension** — scans `/tmp/pi-pipe/` for `.sock` files from alive processes, connects to each, reads the handshake, and keeps the first one whose `cwd` matches (same project or ancestor/descendant). Caches the latest selection. Shows the current file and selection in pi's footer status line. The `/nvim` command sends a prompt with that selection (or file) attached as context.
 
 ```
 CursorMoved → selection.lua → Unix Socket → pi extension caches
                                         │
                            updates footer status line
                                         │
-                           each prompt: sent to LLM as context
+                     `/nvim <prompt>`: sent to LLM as context
 ```
 
 ## Installation
@@ -54,10 +54,17 @@ Restart pi. You should see `pi-pipe ready (cwd: ...)` on startup.
 
 No keymaps, no commands to run. Just open pi in your project, then open Neovim. The plugin starts automatically.
 
-When you type a prompt in pi, the current selection is sent to the LLM as context (only when text is actively selected). You'll also see the current file and selection state in pi's footer:
+To send a prompt with your current Neovim context attached, use the `/nvim` command in pi. It attaches the active selection, or — if nothing is selected — the current file and cursor position:
 
-- **`file.lua:42`** — cursor on line 42, nothing injected
-- **`sel: file.lua:10-25`** — text selected on lines 10-25, injected into context
+```
+/nvim explain what this function does
+/nvim refactor this to use async/await
+```
+
+The args can be multiline (everything after the first space is the prompt). With no args, only the context is sent. You'll also see the current file and selection state in pi's footer:
+
+- **`file.lua:42`** — cursor on line 42, nothing selected
+- **`sel: file.lua:10-25`** — text selected on lines 10-25
 
 ### Commands
 

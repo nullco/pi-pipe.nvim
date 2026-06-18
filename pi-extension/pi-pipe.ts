@@ -5,16 +5,15 @@
  * updates as newline-delimited JSON. This extension connects to that server
  * on session_start and maintains the latest selection in memory.
  *
- * On every before_agent_start, when text is selected, it's injected as
- * a context message so pi can reference it. The footer status line
- * always shows the current file and selection state.
+ * The `/nvim` command sends a prompt to the LLM with the current Neovim
+ * selection (or file, if nothing is selected) attached as context.
+ * The footer status line always shows the current file and selection state.
  */
 
 import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { isUnderOrSame, parsePidFromSocket } from "./helpers.ts";
 
 interface SelectionPayload {
@@ -72,23 +71,27 @@ function findSocketPaths(): { pid: number; path: string }[] {
   return result;
 }
 
-function formatSelectionContext(sel: SelectionPayload): string | null {
+function formatNvimContext(sel: SelectionPayload): string {
   const file = sel.relativePath || sel.fileName;
   const { startLine, startChar, endLine, endChar } = sel.selection;
   const hasSelection =
     endLine > startLine || (endLine === startLine && endChar > startChar);
+  const lang = sel.fileName.match(/\.(\w+)$/)?.[1] || "";
 
-  // Only inject when user has actively selected text
-  if (!hasSelection) return null;
+  if (hasSelection) {
+    const range =
+      startLine === endLine
+        ? `L${startLine} (${startChar}-${endChar})`
+        : `L${startLine}-${endLine}`;
+    return [
+      `Neovim context — \`${file}\` (selection ${range}):`,
+      "```" + lang,
+      sel.selection.text,
+      "```",
+    ].join("\n");
+  }
 
-  const parts: string[] = [];
-  parts.push(`The user has selected text in ${file}:`);
-  parts.push("");
-  parts.push("```" + (sel.fileName.match(/\.(\w+)$/)?.[1] || ""));
-  parts.push(sel.selection.text);
-  parts.push("```");
-
-  return parts.join("\n");
+  return `Neovim context — \`${file}\` (cursor L${startLine}).`;
 }
 
 function formatStatusLine(sel: SelectionPayload): string {
@@ -276,72 +279,19 @@ export default function (pi: ExtensionAPI) {
     updateStatus(ctx);
   });
 
-  // Tool: let the LLM query the current nvim context on demand
-  pi.registerTool({
-    name: "nvim_context",
-    label: "Nvim Context",
-    description:
-      "Get the file, cursor position, and/or selected text from the user's Neovim. " +
-      "Call this when you need to know what file the user is editing, where their cursor is, " +
-      "or what text they have selected. Returns null if no connection to Neovim.",
-    parameters: Type.Object({}),
-    async execute() {
+  // `/nvim <prompt>` — send a prompt with the current Neovim selection
+  // (or file, if nothing is selected) attached as context.
+  pi.registerCommand("nvim", {
+    description: "Send a prompt with current Neovim selection (or file) as context",
+    handler: async (args, ctx) => {
       if (!latestSelection) {
-        return {
-          content: [{
-            type: "text",
-            text: "No Neovim connection. The user may not have Neovim running in this project.",
-          }],
-          details: {},
-        };
+        ctx.ui.notify("pi-pipe: no Neovim connection", "warning");
+        return;
       }
-
-      const sel = latestSelection;
-      const file = sel.relativePath || sel.fileName;
-      const hasSelection =
-        sel.selection.endLine > sel.selection.startLine ||
-        (sel.selection.endLine === sel.selection.startLine &&
-          sel.selection.endChar > sel.selection.startChar);
-
-      if (hasSelection) {
-        return {
-          content: [{
-            type: "text",
-            text:
-              `File: ${file}\n` +
-              `Selection: L${sel.selection.startLine}:${sel.selection.startChar} - L${sel.selection.endLine}:${sel.selection.endChar}\n` +
-              `\n\`\`\`${sel.fileName.match(/\.(\w+)$/)?.[1] || ""}\n${sel.selection.text}\n\`\`\``,
-          }],
-          details: {},
-        };
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text:
-            `File: ${file}\n` +
-            `Cursor: line ${sel.selection.startLine}, col ${sel.selection.startChar}`,
-        }],
-        details: {},
-      };
+      const context = formatNvimContext(latestSelection);
+      const text = args.trim() ? `${args.trim()}\n\n${context}` : context;
+      pi.sendUserMessage(text);
     },
-  });
-
-  // Inject selection as a context message + update footer status
-  pi.on("before_agent_start", async (_event, ctx) => {
-    updateStatus(ctx);
-    if (!latestSelection) return;
-
-    const context = formatSelectionContext(latestSelection);
-    if (!context) return;
-    return {
-      message: {
-        customType: "pi-pipe",
-        content: context,
-        display: false,
-      },
-    };
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
