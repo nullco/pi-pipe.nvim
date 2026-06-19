@@ -263,17 +263,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     sessionCtx = ctx;
 
-    // Capture the active theme instance by briefly installing a throwaway
-    // footer factory. The factory receives the live theme proxy as its
-    // second argument; we stash it and immediately restore the built-in
-    // footer. The proxy reads from globalThis, so it tracks theme switches.
-    if (ctx.hasUI) {
-      ctx.ui.setFooter((_tui, theme, _data) => {
-        activeTheme = theme;
-        return { render: () => [] };
-      });
-      ctx.ui.setFooter(undefined);
-    }
+    // Capture the active theme via ctx.ui.theme — it's the same live proxy
+    // that the built-in footer uses, so it automatically tracks theme switches.
+    activeTheme = ctx.ui.theme;
 
     connect();
     updateStatus(ctx);
